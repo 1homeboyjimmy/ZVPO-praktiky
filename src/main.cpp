@@ -12,12 +12,14 @@
 #include <commctrl.h>
 #include <vector>
 #include <string>
-#include "App.g.h"
+
+// Forward declaration of our App implementation
+namespace winrt::TrayApp::implementation { struct App; }
 
 UINT g_wmTaskbarCreated = 0;
 HANDLE g_hMutex = NULL;
 bool g_startHidden = false;
-winrt::TrayApp::App g_app{ nullptr };
+winrt::Microsoft::UI::Xaml::Application g_app{ nullptr };
 
 void Log(const std::string& message)
 {
@@ -37,8 +39,11 @@ using namespace Microsoft::UI::Xaml::Markup;
 
 namespace winrt::TrayApp::implementation
 {
-    struct App : AppT<App>
+    struct App : winrt::implements<App, winrt::Microsoft::UI::Xaml::IApplicationOverrides>
     {
+        HWND m_hwnd{ NULL };
+        Window m_window{ nullptr };
+
         App()
         {
             Log("App constructor started");
@@ -274,7 +279,8 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int)
         {
             try {
                 Log("Application::Start callback");
-                g_app = make<TrayApp::implementation::App>();
+                auto appImpl = winrt::make_self<TrayApp::implementation::App>();
+                g_app = appImpl.as<winrt::Microsoft::UI::Xaml::Application>();
                 Log("App object created");
             } catch (const winrt::hresult_error& e) {
                 Log("Exception in make<App>: " + winrt::to_string(e.message()));
