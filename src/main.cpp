@@ -1,11 +1,10 @@
 #include "pch.h"
 #include <MddBootstrap.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
+#include <winrt/Microsoft.UI.Dispatching.h>
 #include <fstream>
 #include <chrono>
 #include <windows.h>
-#include <winrt/Microsoft.UI.Dispatching.h>
-
 #include <shellapi.h>
 #include "resources/resource.h"
 #include <microsoft.ui.xaml.window.h>
@@ -13,8 +12,11 @@
 #include <vector>
 #include <string>
 
-// Forward declaration of our App implementation
-namespace winrt::TrayApp::implementation { struct App; }
+#undef GetCurrentTime
+
+#define WM_TRAYICON (WM_USER + 1)
+#define IDM_TRAY_OPEN 1001
+#define IDM_TRAY_EXIT 1002
 
 UINT g_wmTaskbarCreated = 0;
 HANDLE g_hMutex = NULL;
@@ -31,11 +33,9 @@ void Log(const std::string& message)
     logFile.flush();
 }
 
-
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
 using namespace Microsoft::UI::Xaml::Controls;
-using namespace Microsoft::UI::Xaml::Markup;
 
 namespace winrt::TrayApp::implementation
 {
@@ -50,29 +50,26 @@ namespace winrt::TrayApp::implementation
             Log("App constructor finished");
         }
 
-
-
-
-
-
-
         ~App()
         {
             NOTIFYICONDATA nid = { sizeof(nid) };
+            nid.cbSize = sizeof(nid);
             nid.hWnd = m_hwnd;
             nid.uID = 1;
             Shell_NotifyIcon(NIM_DELETE, &nid);
-            Log("Tray icon removed");
         }
-
 
         void OnLaunched(LaunchActivatedEventArgs const&)
         {
             try {
                 Log("OnLaunched started");
+                
+                // Add default resources for WinUI 3 controls
+                Resources().MergedDictionaries().Append(winrt::Microsoft::UI::Xaml::Controls::XamlControlsResources());
+                Log("Resources initialized");
+
                 m_window = Window();
                 
-                // Get HWND
                 auto windowNative{ m_window.as<::IWindowNative>() };
                 windowNative->get_WindowHandle(&m_hwnd);
                 Log("HWND obtained: " + std::to_string((long long)m_hwnd));
@@ -82,21 +79,21 @@ namespace winrt::TrayApp::implementation
 
                 m_window.Title(L"Приложение в трее");
 
-                // Set window icon
                 HICON hIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_TRAYAPP));
                 SendMessage(m_hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
                 SendMessage(m_hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
 
                 StackPanel panel;
-                
-                // Main Menu
                 MenuBar menuBar;
                 MenuBarItem fileItem;
                 fileItem.Title(L"Файл");
                 
                 MenuFlyoutItem exitItem;
                 exitItem.Text(L"Выход");
-                exitItem.Click([&](auto&&, auto&&) { Exit(); PostQuitMessage(0); });
+                exitItem.Click([&](auto&&, auto&&) { 
+                    Application::Current().Exit(); 
+                    PostQuitMessage(0); 
+                });
                 
                 fileItem.Items().Append(exitItem);
                 menuBar.Items().Append(fileItem);
@@ -116,19 +113,12 @@ namespace winrt::TrayApp::implementation
 
                 Button button;
                 button.Content(winrt::box_value(L"Скрыть в трей"));
-                button.Click([&](auto&&, auto&&)
-                {
-                    ShowWindow(m_hwnd, SW_HIDE);
-                });
+                button.Click([&](auto&&, auto&&) { ShowWindow(m_hwnd, SW_HIDE); });
                 contentPanel.Children().Append(button);
 
                 panel.Children().Append(contentPanel);
-
-
-
                 m_window.Content(panel);
 
-                // Handle window close to hide instead of exit
                 m_window.Closed([&](auto&&, auto&& args)
                 {
                     args.Handled(true);
@@ -140,12 +130,7 @@ namespace winrt::TrayApp::implementation
                     m_window.Activate();
                     Log("Window activated");
                 }
-                else
-                {
-                    Log("Started in hidden mode");
-                }
 
-                // Subclass window to handle tray and TaskbarCreated messages
                 SetWindowSubclass(m_hwnd, [](HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR dwRefData) -> LRESULT
                 {
                     App* app = reinterpret_cast<App*>(dwRefData);
@@ -177,26 +162,16 @@ namespace winrt::TrayApp::implementation
             }
         }
 
-
-
-
-
-
-        IXamlType GetXamlType(winrt::Windows::UI::Xaml::Interop::TypeName const&) { return nullptr; }
-        IXamlType GetXamlType(hstring const&) { return nullptr; }
-        winrt::com_array<XmlnsDefinition> GetXmlnsDefinitions() { return {}; }
-
-
-    private:
         void AddTrayIcon()
         {
             NOTIFYICONDATA nid = { sizeof(nid) };
+            nid.cbSize = sizeof(nid);
             nid.hWnd = m_hwnd;
             nid.uID = 1;
             nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
             nid.uCallbackMessage = WM_TRAYICON;
             nid.hIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_TRAYAPP));
-            wcscpy_s(nid.szTip, L"WinUI 3 Tray App");
+            wcscpy_s(nid.szTip, L"TrayApp (WinUI 3)");
             Shell_NotifyIcon(NIM_ADD, &nid);
         }
 
@@ -220,29 +195,15 @@ namespace winrt::TrayApp::implementation
             }
             else if (cmd == IDM_TRAY_EXIT)
             {
-                Exit();
+                Application::Current().Exit();
                 PostQuitMessage(0);
             }
         }
-
-        Window m_window{ nullptr };
-
-        HWND m_hwnd{ nullptr };
-    };
-}
-
-
-
-namespace winrt::TrayApp::factory_implementation
-{
-    struct App : AppT<App, implementation::App>
-    {
     };
 }
 
 int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int)
 {
-    // Single instance check
     g_hMutex = CreateMutex(NULL, TRUE, L"Global\\TrayApp_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS)
     {
@@ -255,7 +216,6 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int)
     Log("Apartment initialized");
 
     g_wmTaskbarCreated = RegisterWindowMessage(L"TaskbarCreated");
-
     std::wstring cmdLine(lpCmdLine);
     g_startHidden = (cmdLine.find(L"-hidden") != std::wstring::npos);
 
@@ -271,7 +231,6 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int)
     Log("Bootstrap initialized");
 
     {
-        // We need a DispatcherQueue for WinUI 3
         auto dispatcherQueueController = winrt::Microsoft::UI::Dispatching::DispatcherQueueController::CreateOnDedicatedThread();
         Log("DispatcherQueueController created");
 
@@ -279,7 +238,7 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int)
         {
             try {
                 Log("Application::Start callback");
-                auto appImpl = winrt::make_self<TrayApp::implementation::App>();
+                auto appImpl = winrt::make_self<winrt::TrayApp::implementation::App>();
                 g_app = appImpl.as<winrt::Microsoft::UI::Xaml::Application>();
                 Log("App object created");
             } catch (const winrt::hresult_error& e) {
@@ -290,7 +249,6 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int)
         });
 
         Log("Application::Start returned - entering manual message loop");
-        
         MSG msg;
         while (GetMessage(&msg, NULL, 0, 0))
         {
@@ -305,5 +263,3 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int)
     Log("Bootstrap shutdown");
     return 0;
 }
-
-
