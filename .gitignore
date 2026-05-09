@@ -1,0 +1,13 @@
+# Build directories
+bin/
+obj/
+Generated Files/
+packages/
+.vs/
+*.user
+*.suo
+*.log
+*.exe
+*.pdb
+*.pri
+*.dll

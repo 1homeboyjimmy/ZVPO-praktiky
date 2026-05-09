@@ -1,0 +1,142 @@
+cmake_minimum_required(VERSION 3.20)
+project(TrayApp LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# --- MSVC flags ---
+if(MSVC)
+    add_compile_options(/utf-8 /EHsc /await)
+    add_compile_definitions(
+        UNICODE _UNICODE
+        WIN32_LEAN_AND_MEAN
+        WINRT_LEAN_AND_MEAN
+        _WINDOWS
+    )
+endif()
+
+# --- NuGet helper: download nuget.exe if missing ---
+set(NUGET_EXE "${CMAKE_BINARY_DIR}/nuget.exe")
+if(NOT EXISTS "${NUGET_EXE}")
+    message(STATUS "Downloading nuget.exe ...")
+    file(DOWNLOAD
+        "https://dist.nuget.org/win-x86-commandline/v6.9.1/nuget.exe"
+        "${NUGET_EXE}"
+        SHOW_PROGRESS
+    )
+endif()
+
+# --- Package versions ---
+set(WASDK_VER   "1.3.230724000")
+set(CPPWINRT_VER "2.0.240405.15")
+set(PKG_DIR     "${CMAKE_BINARY_DIR}/packages")
+
+# --- Install Microsoft.WindowsAppSDK ---
+set(WASDK_DIR "${PKG_DIR}/Microsoft.WindowsAppSDK.${WASDK_VER}")
+if(NOT EXISTS "${WASDK_DIR}")
+    message(STATUS "Installing Microsoft.WindowsAppSDK ${WASDK_VER} ...")
+    execute_process(
+        COMMAND "${NUGET_EXE}" install Microsoft.WindowsAppSDK
+                -Version ${WASDK_VER}
+                -OutputDirectory "${PKG_DIR}"
+        RESULT_VARIABLE _res
+    )
+    if(NOT _res EQUAL 0)
+        message(FATAL_ERROR "Failed to install Microsoft.WindowsAppSDK")
+    endif()
+endif()
+
+# --- Install Microsoft.Windows.CppWinRT ---
+set(CPPWINRT_PKG "${PKG_DIR}/Microsoft.Windows.CppWinRT.${CPPWINRT_VER}")
+if(NOT EXISTS "${CPPWINRT_PKG}")
+    message(STATUS "Installing Microsoft.Windows.CppWinRT ${CPPWINRT_VER} ...")
+    execute_process(
+        COMMAND "${NUGET_EXE}" install Microsoft.Windows.CppWinRT
+                -Version ${CPPWINRT_VER}
+                -OutputDirectory "${PKG_DIR}"
+        RESULT_VARIABLE _res
+    )
+    if(NOT _res EQUAL 0)
+        message(FATAL_ERROR "Failed to install Microsoft.Windows.CppWinRT")
+    endif()
+endif()
+
+# --- Generate C++/WinRT projection headers ---
+set(CPPWINRT_EXE "${CPPWINRT_PKG}/bin/cppwinrt.exe")
+set(GENERATED_DIR "${CMAKE_BINARY_DIR}/cppwinrt")
+
+if(NOT EXISTS "${GENERATED_DIR}/winrt/Microsoft.UI.Xaml.h")
+    message(STATUS "Generating C++/WinRT projection headers ...")
+    set(SDK_VERSION "10.0.22621.0")
+
+    # Find WebView2 package (dependency of WASDK 1.6+)
+    file(GLOB _WEBVIEW2_DIRS "${PKG_DIR}/Microsoft.Web.WebView2.*")
+    list(GET _WEBVIEW2_DIRS -1 WEBVIEW2_DIR)
+    set(WEBVIEW2_WINMD "${WEBVIEW2_DIR}/lib")
+
+    # WindowsAppSDK metadata directories
+    set(WASDK_WINMD_BASE "${WASDK_DIR}/lib/uap10.0.18362")
+    set(WASDK_WINMD_UAP  "${WASDK_DIR}/lib/uap10.0")
+
+    execute_process(
+        COMMAND "${CPPWINRT_EXE}"
+                -input "${WEBVIEW2_WINMD}"
+                -input "${WASDK_WINMD_BASE}"
+                -input "${WASDK_WINMD_UAP}"
+                -input "${SDK_VERSION}"
+                -output "${GENERATED_DIR}"
+        RESULT_VARIABLE _res
+    )
+    if(NOT _res EQUAL 0)
+        message(FATAL_ERROR "cppwinrt.exe failed (code ${_res})")
+    endif()
+endif()
+
+# --- Resolve platform-specific paths ---
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(ARCH "x64")
+else()
+    set(ARCH "x86")
+endif()
+
+set(WASDK_LIB_DIR "${WASDK_DIR}/lib/win10-${ARCH}")
+set(WASDK_INCLUDE  "${WASDK_DIR}/include")
+set(WASDK_RUNTIME  "${WASDK_DIR}/runtimes/win10-${ARCH}/native")
+
+# --- Executable ---
+add_executable(TrayApp WIN32
+    src/main.cpp
+    resources/app.rc
+    src/app.manifest
+)
+
+target_include_directories(TrayApp PRIVATE
+    "${GENERATED_DIR}"
+    "${WASDK_INCLUDE}"
+)
+
+# Link only Bootstrap lib + Win32 + WinRT base
+target_link_libraries(TrayApp PRIVATE
+    "${WASDK_LIB_DIR}/Microsoft.WindowsAppRuntime.Bootstrap.lib"
+    user32 shell32 gdi32 comctl32 ole32 advapi32
+    windowsapp
+)
+
+set_target_properties(TrayApp PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    VS_DPI_AWARE "PerMonitor"
+)
+
+# --- Copy Windows App SDK DLLs to output ---
+add_custom_command(TARGET TrayApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${WASDK_RUNTIME}"
+        "$<TARGET_FILE_DIR:TrayApp>"
+    COMMENT "Copying Windows App SDK runtime DLLs ..."
+)
+
+# --- Install ---
+install(TARGETS TrayApp RUNTIME DESTINATION bin)
+install(DIRECTORY "${WASDK_RUNTIME}/" DESTINATION bin)
+add_compile_definitions(DISABLE_XAML_GENERATED_MAIN) 
+target_include_directories(TrayApp PRIVATE src) 

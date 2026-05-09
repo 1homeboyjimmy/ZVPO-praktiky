@@ -1,0 +1,8 @@
+namespace TrayApp
+{
+    [default_interface]
+    runtimeclass App : Microsoft.UI.Xaml.Application, Microsoft.UI.Xaml.Markup.IXamlMetadataProvider
+    {
+        App();
+    }
+}
