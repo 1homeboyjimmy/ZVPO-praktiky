@@ -27,7 +27,7 @@ if(NOT EXISTS "${NUGET_EXE}")
 endif()
 
 # --- Package versions ---
-set(WASDK_VER   "1.3.230724000")
+set(WASDK_VER   "1.6.240829007")
 set(CPPWINRT_VER "2.0.240405.15")
 set(PKG_DIR     "${CMAKE_BINARY_DIR}/packages")
 
@@ -69,28 +69,46 @@ if(NOT EXISTS "${GENERATED_DIR}/winrt/Microsoft.UI.Xaml.h")
     message(STATUS "Generating C++/WinRT projection headers ...")
     set(SDK_VERSION "10.0.22621.0")
 
-    # Find WebView2 package (dependency of WASDK 1.6+)
-    file(GLOB _WEBVIEW2_DIRS "${PKG_DIR}/Microsoft.Web.WebView2.*")
-    list(GET _WEBVIEW2_DIRS -1 WEBVIEW2_DIR)
-    set(WEBVIEW2_WINMD "${WEBVIEW2_DIR}/lib")
-
     # WindowsAppSDK metadata directories
     set(WASDK_WINMD_BASE "${WASDK_DIR}/lib/uap10.0.18362")
     set(WASDK_WINMD_UAP  "${WASDK_DIR}/lib/uap10.0")
+    
+    set(CPPWINRT_INPUTS "")
+    list(APPEND CPPWINRT_INPUTS -input "${WASDK_WINMD_BASE}")
+    list(APPEND CPPWINRT_INPUTS -input "${WASDK_WINMD_UAP}")
+
+    # Find WebView2 package (it's a dependency)
+    file(GLOB _WEBVIEW2_DIRS "${PKG_DIR}/Microsoft.Web.WebView2.*")
+    if(_WEBVIEW2_DIRS)
+        list(GET _WEBVIEW2_DIRS -1 WEBVIEW2_DIR)
+        list(APPEND CPPWINRT_INPUTS -input "${WEBVIEW2_DIR}/lib")
+    endif()
+
+    # Use environment variables from CI if available, otherwise fallback to default
+    if(DEFINED ENV{WindowsSdkDir} AND DEFINED ENV{WindowsSDKVersion})
+        set(SDK_METADATA_PATH "$ENV{WindowsSdkDir}UnionMetadata/$ENV{WindowsSDKVersion}")
+        # Strip trailing backslash if present
+        string(REGEX REPLACE "\\\\$" "" SDK_METADATA_PATH "${SDK_METADATA_PATH}")
+        message(STATUS "Using Windows SDK metadata from: ${SDK_METADATA_PATH}")
+        list(APPEND CPPWINRT_INPUTS -input "${SDK_METADATA_PATH}")
+    else()
+        message(STATUS "Windows SDK environment variables not found, falling back to 'sdk' keyword")
+        list(APPEND CPPWINRT_INPUTS -input "sdk")
+    endif()
 
     execute_process(
         COMMAND "${CPPWINRT_EXE}"
-                -input "${WEBVIEW2_WINMD}"
-                -input "${WASDK_WINMD_BASE}"
-                -input "${WASDK_WINMD_UAP}"
-                -input "${SDK_VERSION}"
+                ${CPPWINRT_INPUTS}
                 -output "${GENERATED_DIR}"
+                -verbose
         RESULT_VARIABLE _res
     )
+
     if(NOT _res EQUAL 0)
         message(FATAL_ERROR "cppwinrt.exe failed (code ${_res})")
     endif()
 endif()
+
 
 # --- Resolve platform-specific paths ---
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -101,7 +119,13 @@ endif()
 
 set(WASDK_LIB_DIR "${WASDK_DIR}/lib/win10-${ARCH}")
 set(WASDK_INCLUDE  "${WASDK_DIR}/include")
-set(WASDK_RUNTIME  "${WASDK_DIR}/runtimes/win10-${ARCH}/native")
+# Find runtime directory robustly (could be win10-x64 or win-x64)
+file(GLOB _WASDK_RUNTIME_DIRS "${WASDK_DIR}/runtimes/win*-${ARCH}/native")
+if(_WASDK_RUNTIME_DIRS)
+    list(GET _WASDK_RUNTIME_DIRS 0 WASDK_RUNTIME)
+else()
+    set(WASDK_RUNTIME "${WASDK_DIR}/runtimes/win10-${ARCH}/native")
+endif()
 
 # --- Executable ---
 add_executable(TrayApp WIN32
@@ -113,6 +137,7 @@ add_executable(TrayApp WIN32
 target_include_directories(TrayApp PRIVATE
     "${GENERATED_DIR}"
     "${WASDK_INCLUDE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 # Link only Bootstrap lib + Win32 + WinRT base
@@ -138,5 +163,6 @@ add_custom_command(TARGET TrayApp POST_BUILD
 # --- Install ---
 install(TARGETS TrayApp RUNTIME DESTINATION bin)
 install(DIRECTORY "${WASDK_RUNTIME}/" DESTINATION bin)
-add_compile_definitions(DISABLE_XAML_GENERATED_MAIN) 
-target_include_directories(TrayApp PRIVATE src) 
+
+target_compile_definitions(TrayApp PRIVATE DISABLE_XAML_GENERATED_MAIN) 
+target_include_directories(TrayApp PRIVATE src)
