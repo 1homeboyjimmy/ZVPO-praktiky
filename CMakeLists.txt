@@ -84,20 +84,26 @@ if(NOT EXISTS "${GENERATED_DIR}/winrt/Microsoft.UI.Xaml.h")
         list(APPEND CPPWINRT_INPUTS -input "${WEBVIEW2_DIR}/lib")
     endif()
 
-    # Try to find Windows SDK metadata explicitly for CI
-    set(WINDOWS_SDK_METADATA "C:/Program Files (x86)/Windows Kits/10/UnionMetadata/${SDK_VERSION}/Windows.winmd")
-    if(EXISTS "${WINDOWS_SDK_METADATA}")
-        list(APPEND CPPWINRT_INPUTS -input "${WINDOWS_SDK_METADATA}")
+    # Use environment variables from CI if available, otherwise fallback to default
+    if(DEFINED ENV{WindowsSdkDir} AND DEFINED ENV{WindowsSDKVersion})
+        set(SDK_METADATA_PATH "$ENV{WindowsSdkDir}UnionMetadata/$ENV{WindowsSDKVersion}")
+        # Strip trailing backslash if present
+        string(REGEX REPLACE "\\\\$" "" SDK_METADATA_PATH "${SDK_METADATA_PATH}")
+        message(STATUS "Using Windows SDK metadata from: ${SDK_METADATA_PATH}")
+        list(APPEND CPPWINRT_INPUTS -input "${SDK_METADATA_PATH}")
     else()
-        list(APPEND CPPWINRT_INPUTS -input "${SDK_VERSION}")
+        message(STATUS "Windows SDK environment variables not found, falling back to 'sdk' keyword")
+        list(APPEND CPPWINRT_INPUTS -input "sdk")
     endif()
 
     execute_process(
         COMMAND "${CPPWINRT_EXE}"
                 ${CPPWINRT_INPUTS}
                 -output "${GENERATED_DIR}"
+                -verbose
         RESULT_VARIABLE _res
     )
+
     if(NOT _res EQUAL 0)
         message(FATAL_ERROR "cppwinrt.exe failed (code ${_res})")
     endif()
