@@ -119,7 +119,13 @@ endif()
 
 set(WASDK_LIB_DIR "${WASDK_DIR}/lib/win10-${ARCH}")
 set(WASDK_INCLUDE  "${WASDK_DIR}/include")
-set(WASDK_RUNTIME  "${WASDK_DIR}/runtimes/win10-${ARCH}/native")
+# Find runtime directory robustly (could be win10-x64 or win-x64)
+file(GLOB _WASDK_RUNTIME_DIRS "${WASDK_DIR}/runtimes/win*-${ARCH}/native")
+if(_WASDK_RUNTIME_DIRS)
+    list(GET _WASDK_RUNTIME_DIRS 0 WASDK_RUNTIME)
+else()
+    set(WASDK_RUNTIME "${WASDK_DIR}/runtimes/win10-${ARCH}/native")
+endif()
 
 # --- Executable ---
 add_executable(TrayApp WIN32
