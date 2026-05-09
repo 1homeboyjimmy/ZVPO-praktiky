@@ -15,8 +15,6 @@
 #undef GetCurrentTime
 
 #define WM_TRAYICON (WM_USER + 1)
-#define IDM_TRAY_OPEN 1001
-#define IDM_TRAY_EXIT 1002
 
 UINT g_wmTaskbarCreated = 0;
 HANDLE g_hMutex = NULL;
@@ -65,7 +63,7 @@ namespace winrt::TrayApp::implementation
                 Log("OnLaunched started");
                 
                 // Add default resources for WinUI 3 controls
-                Resources().MergedDictionaries().Append(winrt::Microsoft::UI::Xaml::Controls::XamlControlsResources());
+                Application::Current().Resources().MergedDictionaries().Append(winrt::Microsoft::UI::Xaml::Controls::XamlControlsResources());
                 Log("Resources initialized");
 
                 m_window = Window();
