@@ -27,7 +27,7 @@ if(NOT EXISTS "${NUGET_EXE}")
 endif()
 
 # --- Package versions ---
-set(WASDK_VER   "1.3.230724000")
+set(WASDK_VER   "1.6.240829007")
 set(CPPWINRT_VER "2.0.240405.15")
 set(PKG_DIR     "${CMAKE_BINARY_DIR}/packages")
 
@@ -69,21 +69,32 @@ if(NOT EXISTS "${GENERATED_DIR}/winrt/Microsoft.UI.Xaml.h")
     message(STATUS "Generating C++/WinRT projection headers ...")
     set(SDK_VERSION "10.0.22621.0")
 
-    # Find WebView2 package (dependency of WASDK 1.6+)
-    file(GLOB _WEBVIEW2_DIRS "${PKG_DIR}/Microsoft.Web.WebView2.*")
-    list(GET _WEBVIEW2_DIRS -1 WEBVIEW2_DIR)
-    set(WEBVIEW2_WINMD "${WEBVIEW2_DIR}/lib")
-
     # WindowsAppSDK metadata directories
     set(WASDK_WINMD_BASE "${WASDK_DIR}/lib/uap10.0.18362")
     set(WASDK_WINMD_UAP  "${WASDK_DIR}/lib/uap10.0")
+    
+    set(CPPWINRT_INPUTS "")
+    list(APPEND CPPWINRT_INPUTS -input "${WASDK_WINMD_BASE}")
+    list(APPEND CPPWINRT_INPUTS -input "${WASDK_WINMD_UAP}")
+
+    # Find WebView2 package (it's a dependency)
+    file(GLOB _WEBVIEW2_DIRS "${PKG_DIR}/Microsoft.Web.WebView2.*")
+    if(_WEBVIEW2_DIRS)
+        list(GET _WEBVIEW2_DIRS -1 WEBVIEW2_DIR)
+        list(APPEND CPPWINRT_INPUTS -input "${WEBVIEW2_DIR}/lib")
+    endif()
+
+    # Try to find Windows SDK metadata explicitly for CI
+    set(WINDOWS_SDK_METADATA "C:/Program Files (x86)/Windows Kits/10/UnionMetadata/${SDK_VERSION}/Windows.winmd")
+    if(EXISTS "${WINDOWS_SDK_METADATA}")
+        list(APPEND CPPWINRT_INPUTS -input "${WINDOWS_SDK_METADATA}")
+    else()
+        list(APPEND CPPWINRT_INPUTS -input "${SDK_VERSION}")
+    endif()
 
     execute_process(
         COMMAND "${CPPWINRT_EXE}"
-                -input "${WEBVIEW2_WINMD}"
-                -input "${WASDK_WINMD_BASE}"
-                -input "${WASDK_WINMD_UAP}"
-                -input "${SDK_VERSION}"
+                ${CPPWINRT_INPUTS}
                 -output "${GENERATED_DIR}"
         RESULT_VARIABLE _res
     )
@@ -91,6 +102,7 @@ if(NOT EXISTS "${GENERATED_DIR}/winrt/Microsoft.UI.Xaml.h")
         message(FATAL_ERROR "cppwinrt.exe failed (code ${_res})")
     endif()
 endif()
+
 
 # --- Resolve platform-specific paths ---
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -138,5 +150,6 @@ add_custom_command(TARGET TrayApp POST_BUILD
 # --- Install ---
 install(TARGETS TrayApp RUNTIME DESTINATION bin)
 install(DIRECTORY "${WASDK_RUNTIME}/" DESTINATION bin)
-add_compile_definitions(DISABLE_XAML_GENERATED_MAIN) 
-target_include_directories(TrayApp PRIVATE src) 
+
+target_compile_definitions(TrayApp PRIVATE DISABLE_XAML_GENERATED_MAIN) 
+target_include_directories(TrayApp PRIVATE src)
