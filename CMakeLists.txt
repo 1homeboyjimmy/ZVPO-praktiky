@@ -131,6 +131,7 @@ add_executable(TrayApp WIN32
 target_include_directories(TrayApp PRIVATE
     "${GENERATED_DIR}"
     "${WASDK_INCLUDE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 # Link only Bootstrap lib + Win32 + WinRT base
