@@ -1,4 +1,0 @@
-C:/Users/eat07/Documents/RBPO/ZVPO praktiky/build/CMakeFiles/TrayApp.dir
-C:/Users/eat07/Documents/RBPO/ZVPO praktiky/build/CMakeFiles/INSTALL.dir
-C:/Users/eat07/Documents/RBPO/ZVPO praktiky/build/CMakeFiles/ALL_BUILD.dir
-C:/Users/eat07/Documents/RBPO/ZVPO praktiky/build/CMakeFiles/ZERO_CHECK.dir
