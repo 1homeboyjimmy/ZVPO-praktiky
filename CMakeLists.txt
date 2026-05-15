@@ -128,8 +128,21 @@ else()
 endif()
 
 # --- Executable ---
+set(RPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/rpc")
+file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
+
+add_custom_command(
+    OUTPUT "${RPC_OUTPUT_DIR}/ServiceRpc_h.h"
+           "${RPC_OUTPUT_DIR}/ServiceRpc_c.c"
+           "${RPC_OUTPUT_DIR}/ServiceRpc_s.c"
+    COMMAND midl.exe /nologo /env x64 /Oicf /h "ServiceRpc_h.h" /cstub "ServiceRpc_c.c" /sstub "ServiceRpc_s.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/ServiceRpc.idl"
+    WORKING_DIRECTORY "${RPC_OUTPUT_DIR}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/ServiceRpc.idl"
+)
+
 add_executable(TrayApp WIN32
     src/main.cpp
+    "${RPC_OUTPUT_DIR}/ServiceRpc_c.c"
     resources/app.rc
     src/app.manifest
 )
@@ -138,12 +151,13 @@ target_include_directories(TrayApp PRIVATE
     "${GENERATED_DIR}"
     "${WASDK_INCLUDE}"
     "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${RPC_OUTPUT_DIR}"
 )
 
 # Link only Bootstrap lib + Win32 + WinRT base
 target_link_libraries(TrayApp PRIVATE
     "${WASDK_LIB_DIR}/Microsoft.WindowsAppRuntime.Bootstrap.lib"
-    user32 shell32 gdi32 comctl32 ole32 advapi32
+    user32 shell32 gdi32 comctl32 ole32 advapi32 rpcrt4 wtsapi32 tlhelp32
     windowsapp
 )
 
@@ -164,5 +178,20 @@ add_custom_command(TARGET TrayApp POST_BUILD
 install(TARGETS TrayApp RUNTIME DESTINATION bin)
 install(DIRECTORY "${WASDK_RUNTIME}/" DESTINATION bin)
 
-target_compile_definitions(TrayApp PRIVATE DISABLE_XAML_GENERATED_MAIN) 
+target_compile_definitions(TrayApp PRIVATE DISABLE_XAML_GENERATED_MAIN)
 target_include_directories(TrayApp PRIVATE src)
+
+add_executable(TrayAppService WIN32
+    src/service_main.cpp
+    "${RPC_OUTPUT_DIR}/ServiceRpc_s.c"
+)
+target_include_directories(TrayAppService PRIVATE "${RPC_OUTPUT_DIR}")
+target_link_libraries(TrayAppService PRIVATE user32 advapi32 rpcrt4 wtsapi32 userenv)
+set_target_properties(TrayAppService PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(SecurePrompt WIN32
+    src/prompt_main.cpp
+)
+target_link_libraries(SecurePrompt PRIVATE user32)
+set_target_properties(SecurePrompt PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+

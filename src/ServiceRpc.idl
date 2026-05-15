@@ -1,0 +1,10 @@
+[
+    uuid(4556509D-A480-4D2A-8BA6-319BE24B2B0A),
+    version(1.0)
+]
+interface ITrayAppService
+{
+    void StopService(
+        [in] handle_t Binding
+    );
+}

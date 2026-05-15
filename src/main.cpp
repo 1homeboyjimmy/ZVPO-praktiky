@@ -11,6 +11,95 @@
 #include <commctrl.h>
 #include <vector>
 #include <string>
+#include <tlhelp32.h>
+#include "ServiceRpc_h.h"
+
+void* __RPC_USER MIDL_user_allocate(size_t size) { return malloc(size); }
+void __RPC_USER MIDL_user_free(void* p) { free(p); }
+
+void StopTrayAppService() {
+    RPC_WSTR szStringBinding = NULL;
+    RPC_STATUS status = RpcStringBindingComposeW(NULL, (RPC_WSTR)L"ncalrpc", NULL, (RPC_WSTR)L"TrayAppRpcPort", NULL, &szStringBinding);
+    if (status == RPC_S_OK) {
+        handle_t bindingHandle;
+        status = RpcBindingFromStringBindingW(szStringBinding, &bindingHandle);
+        if (status == RPC_S_OK) {
+            RpcTryExcept {
+                StopService(bindingHandle);
+            } RpcExcept(1) {
+            } RpcEndExcept
+            RpcBindingFree(&bindingHandle);
+        }
+        RpcStringFreeW(&szStringBinding);
+    }
+}
+
+bool IsServiceRunning() {
+    bool isRunning = false;
+    SC_HANDLE hSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
+    if (hSCManager) {
+        SC_HANDLE hService = OpenServiceW(hSCManager, L"TrayAppService", SERVICE_QUERY_STATUS);
+        if (hService) {
+            SERVICE_STATUS status;
+            if (QueryServiceStatus(hService, &status)) {
+                isRunning = (status.dwCurrentState == SERVICE_RUNNING);
+            }
+            CloseServiceHandle(hService);
+        }
+        CloseServiceHandle(hSCManager);
+    }
+    return isRunning;
+}
+
+void StartTrayAppService() {
+    SC_HANDLE hSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
+    if (hSCManager) {
+        SC_HANDLE hService = OpenServiceW(hSCManager, L"TrayAppService", SERVICE_START | SERVICE_QUERY_STATUS);
+        if (hService) {
+            StartServiceW(hService, 0, NULL);
+            SERVICE_STATUS status;
+            while (QueryServiceStatus(hService, &status)) {
+                if (status.dwCurrentState == SERVICE_RUNNING) break;
+                if (status.dwCurrentState == SERVICE_STOPPED) break;
+                Sleep(500);
+            }
+            CloseServiceHandle(hService);
+        }
+        CloseServiceHandle(hSCManager);
+    }
+}
+
+bool IsParentService() {
+    DWORD myPid = GetCurrentProcessId();
+    DWORD parentPid = 0;
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe;
+        pe.dwSize = sizeof(pe);
+        if (Process32FirstW(hSnap, &pe)) {
+            do {
+                if (pe.th32ProcessID == myPid) {
+                    parentPid = pe.th32ParentProcessID;
+                    break;
+                }
+            } while (Process32NextW(hSnap, &pe));
+        }
+        
+        if (parentPid != 0) {
+            if (Process32FirstW(hSnap, &pe)) {
+                do {
+                    if (pe.th32ProcessID == parentPid) {
+                        CloseHandle(hSnap);
+                        return _wcsicmp(pe.szExeFile, L"TrayAppService.exe") == 0;
+                    }
+                } while (Process32NextW(hSnap, &pe));
+            }
+        }
+        CloseHandle(hSnap);
+    }
+    return false;
+}
+
 
 #undef GetCurrentTime
 
@@ -89,8 +178,7 @@ namespace winrt::TrayApp::implementation
                 MenuFlyoutItem exitItem;
                 exitItem.Text(L"Выход");
                 exitItem.Click([&](auto&&, auto&&) { 
-                    Application::Current().Exit(); 
-                    PostQuitMessage(0); 
+                    StopTrayAppService();
                 });
                 
                 fileItem.Items().Append(exitItem);
@@ -193,8 +281,7 @@ namespace winrt::TrayApp::implementation
             }
             else if (cmd == IDM_TRAY_EXIT)
             {
-                Application::Current().Exit();
-                PostQuitMessage(0);
+                StopTrayAppService();
             }
         }
     };
@@ -202,6 +289,14 @@ namespace winrt::TrayApp::implementation
 
 int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int)
 {
+    if (!IsServiceRunning()) {
+        StartTrayAppService();
+        return 0;
+    }
+
+    if (!IsParentService()) {
+        return 0;
+    }
     g_hMutex = CreateMutex(NULL, TRUE, L"Global\\TrayApp_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS)
     {
