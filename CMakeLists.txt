@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TrayApp LANGUAGES CXX)
+project(TrayApp LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -128,6 +128,41 @@ else()
 endif()
 
 # --- Executable ---
+set(RPC_OUTPUT_DIR "${CMAKE_BINARY_DIR}/rpc")
+file(MAKE_DIRECTORY "${RPC_OUTPUT_DIR}")
+
+add_custom_command(
+    OUTPUT "${RPC_OUTPUT_DIR}/ServiceRpc_h.h"
+           "${RPC_OUTPUT_DIR}/ServiceRpc_c.c"
+           "${RPC_OUTPUT_DIR}/ServiceRpc_s.c"
+    COMMAND midl.exe /nologo /env x64 /Oicf /h "ServiceRpc_h.h" /cstub "ServiceRpc_c.c" /sstub "ServiceRpc_s.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/ServiceRpc.idl"
+    WORKING_DIRECTORY "${RPC_OUTPUT_DIR}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/ServiceRpc.idl"
+)
+
+set_source_files_properties(
+    "${RPC_OUTPUT_DIR}/ServiceRpc_c.c"
+    "${RPC_OUTPUT_DIR}/ServiceRpc_s.c"
+    "${RPC_OUTPUT_DIR}/ServiceRpc_h.h"
+    PROPERTIES GENERATED TRUE
+)
+
+add_custom_target(GenerateRpcStubs DEPENDS
+    "${RPC_OUTPUT_DIR}/ServiceRpc_h.h"
+    "${RPC_OUTPUT_DIR}/ServiceRpc_c.c"
+    "${RPC_OUTPUT_DIR}/ServiceRpc_s.c"
+)
+
+add_library(RpcClientStub STATIC "${RPC_OUTPUT_DIR}/ServiceRpc_c.c")
+set_target_properties(RpcClientStub PROPERTIES LINKER_LANGUAGE C)
+target_include_directories(RpcClientStub PUBLIC "${RPC_OUTPUT_DIR}")
+add_dependencies(RpcClientStub GenerateRpcStubs)
+
+add_library(RpcServerStub STATIC "${RPC_OUTPUT_DIR}/ServiceRpc_s.c")
+set_target_properties(RpcServerStub PROPERTIES LINKER_LANGUAGE C)
+target_include_directories(RpcServerStub PUBLIC "${RPC_OUTPUT_DIR}")
+add_dependencies(RpcServerStub GenerateRpcStubs)
+
 add_executable(TrayApp WIN32
     src/main.cpp
     resources/app.rc
@@ -138,12 +173,14 @@ target_include_directories(TrayApp PRIVATE
     "${GENERATED_DIR}"
     "${WASDK_INCLUDE}"
     "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${RPC_OUTPUT_DIR}"
 )
 
 # Link only Bootstrap lib + Win32 + WinRT base
 target_link_libraries(TrayApp PRIVATE
+    RpcClientStub
     "${WASDK_LIB_DIR}/Microsoft.WindowsAppRuntime.Bootstrap.lib"
-    user32 shell32 gdi32 comctl32 ole32 advapi32
+    user32 shell32 gdi32 comctl32 ole32 advapi32 rpcrt4 wtsapi32
     windowsapp
 )
 
@@ -164,5 +201,19 @@ add_custom_command(TARGET TrayApp POST_BUILD
 install(TARGETS TrayApp RUNTIME DESTINATION bin)
 install(DIRECTORY "${WASDK_RUNTIME}/" DESTINATION bin)
 
-target_compile_definitions(TrayApp PRIVATE DISABLE_XAML_GENERATED_MAIN) 
+target_compile_definitions(TrayApp PRIVATE DISABLE_XAML_GENERATED_MAIN)
 target_include_directories(TrayApp PRIVATE src)
+
+add_executable(TrayAppService WIN32
+    src/service_main.cpp
+)
+target_include_directories(TrayAppService PRIVATE "${RPC_OUTPUT_DIR}")
+target_link_libraries(TrayAppService PRIVATE RpcServerStub user32 advapi32 rpcrt4 wtsapi32 userenv)
+set_target_properties(TrayAppService PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
+add_executable(SecurePrompt WIN32
+    src/prompt_main.cpp
+)
+target_link_libraries(SecurePrompt PRIVATE user32)
+set_target_properties(SecurePrompt PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+
