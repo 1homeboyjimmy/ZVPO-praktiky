@@ -153,9 +153,16 @@ add_custom_target(GenerateRpcStubs DEPENDS
     "${RPC_OUTPUT_DIR}/ServiceRpc_s.c"
 )
 
+add_library(RpcClientStub STATIC "${RPC_OUTPUT_DIR}/ServiceRpc_c.c")
+target_include_directories(RpcClientStub PUBLIC "${RPC_OUTPUT_DIR}")
+add_dependencies(RpcClientStub GenerateRpcStubs)
+
+add_library(RpcServerStub STATIC "${RPC_OUTPUT_DIR}/ServiceRpc_s.c")
+target_include_directories(RpcServerStub PUBLIC "${RPC_OUTPUT_DIR}")
+add_dependencies(RpcServerStub GenerateRpcStubs)
+
 add_executable(TrayApp WIN32
     src/main.cpp
-    "${RPC_OUTPUT_DIR}/ServiceRpc_c.c"
     resources/app.rc
     src/app.manifest
 )
@@ -169,11 +176,11 @@ target_include_directories(TrayApp PRIVATE
 
 # Link only Bootstrap lib + Win32 + WinRT base
 target_link_libraries(TrayApp PRIVATE
+    RpcClientStub
     "${WASDK_LIB_DIR}/Microsoft.WindowsAppRuntime.Bootstrap.lib"
     user32 shell32 gdi32 comctl32 ole32 advapi32 rpcrt4 wtsapi32
     windowsapp
 )
-add_dependencies(TrayApp GenerateRpcStubs)
 
 set_target_properties(TrayApp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -197,12 +204,10 @@ target_include_directories(TrayApp PRIVATE src)
 
 add_executable(TrayAppService WIN32
     src/service_main.cpp
-    "${RPC_OUTPUT_DIR}/ServiceRpc_s.c"
 )
 target_include_directories(TrayAppService PRIVATE "${RPC_OUTPUT_DIR}")
-target_link_libraries(TrayAppService PRIVATE user32 advapi32 rpcrt4 wtsapi32 userenv)
+target_link_libraries(TrayAppService PRIVATE RpcServerStub user32 advapi32 rpcrt4 wtsapi32 userenv)
 set_target_properties(TrayAppService PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-add_dependencies(TrayAppService GenerateRpcStubs)
 
 add_executable(SecurePrompt WIN32
     src/prompt_main.cpp
