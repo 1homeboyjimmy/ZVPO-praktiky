@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TrayApp LANGUAGES CXX)
+project(TrayApp LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -154,10 +154,12 @@ add_custom_target(GenerateRpcStubs DEPENDS
 )
 
 add_library(RpcClientStub STATIC "${RPC_OUTPUT_DIR}/ServiceRpc_c.c")
+set_target_properties(RpcClientStub PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(RpcClientStub PUBLIC "${RPC_OUTPUT_DIR}")
 add_dependencies(RpcClientStub GenerateRpcStubs)
 
 add_library(RpcServerStub STATIC "${RPC_OUTPUT_DIR}/ServiceRpc_s.c")
+set_target_properties(RpcServerStub PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(RpcServerStub PUBLIC "${RPC_OUTPUT_DIR}")
 add_dependencies(RpcServerStub GenerateRpcStubs)
 
