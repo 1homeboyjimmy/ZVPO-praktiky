@@ -13,9 +13,84 @@
 #include <string>
 #include <tlhelp32.h>
 #include "ServiceRpc_h.h"
+#include "AuthLicenseRpc_h.h"
 
 void* __RPC_USER MIDL_user_allocate(size_t size) { return malloc(size); }
 void __RPC_USER MIDL_user_free(void* p) { free(p); }
+
+static handle_t OpenServiceBinding() {
+    RPC_WSTR sb = NULL;
+    handle_t h = NULL;
+    if (RpcStringBindingComposeW(NULL, (RPC_WSTR)L"ncalrpc", NULL, (RPC_WSTR)L"TrayAppRpcPort", NULL, &sb) == RPC_S_OK) {
+        RpcBindingFromStringBindingW(sb, &h);
+        RpcStringFreeW(&sb);
+    }
+    return h;
+}
+
+static std::wstring RpcGetCurrentUser() {
+    std::wstring out;
+    handle_t h = OpenServiceBinding();
+    if (!h) return out;
+    wchar_t* name = NULL;
+    RpcTryExcept {
+        if (GetCurrentUser(h, &name) == S_OK && name) {
+            out = name;
+            MIDL_user_free(name);
+        }
+    } RpcExcept(1) {} RpcEndExcept
+    RpcBindingFree(&h);
+    return out;
+}
+
+static int RpcLogin(const std::wstring& u, const std::wstring& p) {
+    int status = -1;
+    handle_t h = OpenServiceBinding();
+    if (!h) return status;
+    RpcTryExcept {
+        long hs = 0;
+        Login(h, u.c_str(), p.c_str(), &hs);
+        status = (int)hs;
+    } RpcExcept(1) {} RpcEndExcept
+    RpcBindingFree(&h);
+    return status;
+}
+
+static void RpcLogout() {
+    handle_t h = OpenServiceBinding();
+    if (!h) return;
+    RpcTryExcept { Logout(h); } RpcExcept(1) {} RpcEndExcept
+    RpcBindingFree(&h);
+}
+
+static bool RpcGetLicenseInfo(std::wstring& expiry) {
+    bool has = false;
+    handle_t h = OpenServiceBinding();
+    if (!h) return false;
+    RpcTryExcept {
+        long hasL = 0;
+        wchar_t* exp = NULL;
+        if (GetLicenseInfo(h, &hasL, &exp) == S_OK) {
+            has = (hasL != 0);
+            if (exp) { expiry = exp; MIDL_user_free(exp); }
+        }
+    } RpcExcept(1) {} RpcEndExcept
+    RpcBindingFree(&h);
+    return has;
+}
+
+static int RpcActivate(const std::wstring& key) {
+    int status = -1;
+    handle_t h = OpenServiceBinding();
+    if (!h) return status;
+    RpcTryExcept {
+        long hs = 0;
+        Activate(h, key.c_str(), &hs);
+        status = (int)hs;
+    } RpcExcept(1) {} RpcEndExcept
+    RpcBindingFree(&h);
+    return status;
+}
 
 void StopTrayAppService() {
     RPC_WSTR szStringBinding = NULL;
@@ -130,6 +205,10 @@ namespace winrt::TrayApp::implementation
     {
         HWND m_hwnd{ NULL };
         Window m_window{ nullptr };
+        StackPanel m_contentHost{ nullptr };
+        winrt::Microsoft::UI::Xaml::DispatcherTimer m_pollTimer{ nullptr };
+        bool m_lastHasLicense{ false };
+        std::wstring m_lastUsername;
 
         App()
         {
@@ -188,22 +267,19 @@ namespace winrt::TrayApp::implementation
                 panel.HorizontalAlignment(HorizontalAlignment::Stretch);
                 panel.VerticalAlignment(VerticalAlignment::Stretch);
 
-                StackPanel contentPanel;
-                contentPanel.HorizontalAlignment(HorizontalAlignment::Center);
-                contentPanel.VerticalAlignment(VerticalAlignment::Center);
-
-                TextBlock text;
-                text.Text(L"Приложение в трее (WinUI 3)");
-                text.FontSize(24);
-                contentPanel.Children().Append(text);
-
-                Button button;
-                button.Content(winrt::box_value(L"Скрыть в трей"));
-                button.Click([&](auto&&, auto&&) { ShowWindow(m_hwnd, SW_HIDE); });
-                contentPanel.Children().Append(button);
-
-                panel.Children().Append(contentPanel);
+                m_contentHost = StackPanel();
+                m_contentHost.HorizontalAlignment(HorizontalAlignment::Center);
+                m_contentHost.VerticalAlignment(VerticalAlignment::Center);
+                m_contentHost.Spacing(12);
+                panel.Children().Append(m_contentHost);
                 m_window.Content(panel);
+
+                RefreshUI();
+
+                m_pollTimer = winrt::Microsoft::UI::Xaml::DispatcherTimer();
+                m_pollTimer.Interval(std::chrono::seconds(5));
+                m_pollTimer.Tick([this](auto&&, auto&&) { RefreshUI(); });
+                m_pollTimer.Start();
 
                 m_window.Closed([&](auto&&, auto&& args)
                 {
@@ -245,6 +321,198 @@ namespace winrt::TrayApp::implementation
                 Log("Exception in OnLaunched: " + winrt::to_string(e.message()));
             } catch (...) {
                 Log("Unknown Exception in OnLaunched");
+            }
+        }
+
+        void RefreshUI()
+        {
+            std::wstring user = RpcGetCurrentUser();
+            if (user.empty()) {
+                m_lastUsername.clear();
+                m_lastHasLicense = false;
+                BuildLoginForm();
+                return;
+            }
+
+            std::wstring expiry;
+            bool hasLic = RpcGetLicenseInfo(expiry);
+
+            if (user == m_lastUsername && hasLic == m_lastHasLicense && m_contentHost.Children().Size() > 0) {
+                if (hasLic) {
+                    UpdateLicensedView(user, expiry);
+                }
+                return;
+            }
+            m_lastUsername = user;
+            m_lastHasLicense = hasLic;
+
+            if (!hasLic) {
+                BuildActivationForm(user);
+            } else {
+                BuildLicensedView(user, expiry);
+            }
+        }
+
+        void BuildLoginForm()
+        {
+            m_contentHost.Children().Clear();
+
+            TextBlock title;
+            title.Text(L"Вход в учётную запись");
+            title.FontSize(24);
+            title.HorizontalAlignment(HorizontalAlignment::Center);
+            m_contentHost.Children().Append(title);
+
+            TextBlock warn;
+            warn.Text(L"Функциональность антивируса заблокирована");
+            warn.Foreground(winrt::Microsoft::UI::Xaml::Media::SolidColorBrush(winrt::Windows::UI::Colors::OrangeRed()));
+            m_contentHost.Children().Append(warn);
+
+            TextBox userBox;
+            userBox.PlaceholderText(L"Логин");
+            userBox.Width(280);
+            m_contentHost.Children().Append(userBox);
+
+            PasswordBox passBox;
+            passBox.PlaceholderText(L"Пароль");
+            passBox.Width(280);
+            m_contentHost.Children().Append(passBox);
+
+            TextBlock err;
+            err.Foreground(winrt::Microsoft::UI::Xaml::Media::SolidColorBrush(winrt::Windows::UI::Colors::Red()));
+            m_contentHost.Children().Append(err);
+
+            Button loginBtn;
+            loginBtn.Content(winrt::box_value(L"Войти"));
+            loginBtn.HorizontalAlignment(HorizontalAlignment::Center);
+            loginBtn.Click([this, userBox, passBox, err](auto&&, auto&&) {
+                std::wstring u(userBox.Text().c_str());
+                std::wstring p(passBox.Password().c_str());
+                if (u.empty() || p.empty()) {
+                    err.Text(L"Введите логин и пароль");
+                    return;
+                }
+                int status = RpcLogin(u, p);
+                if (status == 200) {
+                    RefreshUI();
+                } else {
+                    wchar_t msg[128];
+                    swprintf_s(msg, L"Ошибка входа (HTTP %d)", status);
+                    err.Text(msg);
+                }
+            });
+            m_contentHost.Children().Append(loginBtn);
+        }
+
+        void BuildActivationForm(const std::wstring& user)
+        {
+            m_contentHost.Children().Clear();
+
+            TextBlock greet;
+            greet.Text(L"Пользователь: " + winrt::hstring(user.c_str()));
+            greet.FontSize(18);
+            m_contentHost.Children().Append(greet);
+
+            TextBlock warn;
+            warn.Text(L"Лицензия не активирована. Антивирус заблокирован.");
+            warn.Foreground(winrt::Microsoft::UI::Xaml::Media::SolidColorBrush(winrt::Windows::UI::Colors::OrangeRed()));
+            m_contentHost.Children().Append(warn);
+
+            TextBox keyBox;
+            keyBox.PlaceholderText(L"Код активации");
+            keyBox.Width(320);
+            m_contentHost.Children().Append(keyBox);
+
+            TextBlock err;
+            err.Foreground(winrt::Microsoft::UI::Xaml::Media::SolidColorBrush(winrt::Windows::UI::Colors::Red()));
+            m_contentHost.Children().Append(err);
+
+            StackPanel buttons;
+            buttons.Orientation(Orientation::Horizontal);
+            buttons.Spacing(8);
+            buttons.HorizontalAlignment(HorizontalAlignment::Center);
+
+            Button activateBtn;
+            activateBtn.Content(winrt::box_value(L"Активировать"));
+            activateBtn.Click([this, keyBox, err](auto&&, auto&&) {
+                std::wstring k(keyBox.Text().c_str());
+                if (k.empty()) { err.Text(L"Введите код"); return; }
+                int status = RpcActivate(k);
+                if (status == 200) {
+                    m_lastHasLicense = false;
+                    RefreshUI();
+                } else {
+                    wchar_t msg[128];
+                    swprintf_s(msg, L"Ошибка активации (HTTP %d)", status);
+                    err.Text(msg);
+                }
+            });
+            buttons.Children().Append(activateBtn);
+
+            Button logoutBtn;
+            logoutBtn.Content(winrt::box_value(L"Выйти"));
+            logoutBtn.Click([this](auto&&, auto&&) {
+                RpcLogout();
+                RefreshUI();
+            });
+            buttons.Children().Append(logoutBtn);
+
+            m_contentHost.Children().Append(buttons);
+        }
+
+        void BuildLicensedView(const std::wstring& user, const std::wstring& expiry)
+        {
+            m_contentHost.Children().Clear();
+
+            TextBlock greet;
+            greet.Text(L"Пользователь: " + winrt::hstring(user.c_str()));
+            greet.FontSize(20);
+            m_contentHost.Children().Append(greet);
+
+            TextBlock ok;
+            ok.Text(L"Антивирус активен");
+            ok.FontSize(18);
+            ok.Foreground(winrt::Microsoft::UI::Xaml::Media::SolidColorBrush(winrt::Windows::UI::Colors::SeaGreen()));
+            m_contentHost.Children().Append(ok);
+
+            TextBlock expiryLabel;
+            expiryLabel.Text(L"Лицензия действует до: " + winrt::hstring(expiry.c_str()));
+            m_contentHost.Children().Append(expiryLabel);
+
+            StackPanel buttons;
+            buttons.Orientation(Orientation::Horizontal);
+            buttons.Spacing(8);
+            buttons.HorizontalAlignment(HorizontalAlignment::Center);
+
+            Button hideBtn;
+            hideBtn.Content(winrt::box_value(L"Скрыть в трей"));
+            hideBtn.Click([this](auto&&, auto&&) { ShowWindow(m_hwnd, SW_HIDE); });
+            buttons.Children().Append(hideBtn);
+
+            Button logoutBtn;
+            logoutBtn.Content(winrt::box_value(L"Выйти из аккаунта"));
+            logoutBtn.Click([this](auto&&, auto&&) {
+                RpcLogout();
+                RefreshUI();
+            });
+            buttons.Children().Append(logoutBtn);
+
+            m_contentHost.Children().Append(buttons);
+        }
+
+        void UpdateLicensedView(const std::wstring& user, const std::wstring& expiry)
+        {
+            auto count = m_contentHost.Children().Size();
+            for (uint32_t i = 0; i < count; i++) {
+                auto child = m_contentHost.Children().GetAt(i);
+                auto tb = child.try_as<TextBlock>();
+                if (tb) {
+                    winrt::hstring t = tb.Text();
+                    std::wstring ws(t);
+                    if (ws.find(L"Лицензия действует до:") == 0) {
+                        tb.Text(L"Лицензия действует до: " + winrt::hstring(expiry.c_str()));
+                    }
+                }
             }
         }
 

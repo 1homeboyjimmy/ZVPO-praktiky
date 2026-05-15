@@ -6,6 +6,8 @@
 #include <tlhelp32.h>
 #include <string>
 #include "ServiceRpc_h.h"
+#include "AuthLicenseRpc_h.h"
+#include "AuthLicense.h"
 
 SERVICE_STATUS g_ServiceStatus = { 0 };
 SERVICE_STATUS_HANDLE g_StatusHandle = NULL;
@@ -165,6 +167,55 @@ void StopService(handle_t Binding) {
     RpcMgmtStopServerListening(NULL);
 }
 
+static wchar_t* AllocRpcWString(const std::wstring& s) {
+    size_t bytes = (s.size() + 1) * sizeof(wchar_t);
+    wchar_t* out = (wchar_t*)midl_user_allocate(bytes);
+    if (!out) return NULL;
+    memcpy(out, s.c_str(), bytes);
+    return out;
+}
+
+long GetCurrentUser(handle_t Binding, wchar_t** Username) {
+    if (!Username) return E_POINTER;
+    *Username = AllocRpcWString(AuthLicenseManager::Instance().GetUsername());
+    return *Username ? S_OK : E_OUTOFMEMORY;
+}
+
+long Login(handle_t Binding, const wchar_t* Username, const wchar_t* Password, long* HttpStatus) {
+    if (!Username || !Password || !HttpStatus) return E_POINTER;
+    *HttpStatus = AuthLicenseManager::Instance().Login(Username, Password);
+    return (*HttpStatus == 200) ? S_OK : E_FAIL;
+}
+
+long Logout(handle_t Binding) {
+    AuthLicenseManager::Instance().Logout();
+    return S_OK;
+}
+
+long GetLicenseInfo(handle_t Binding, long* HasLicense, wchar_t** ExpiryDate) {
+    if (!HasLicense || !ExpiryDate) return E_POINTER;
+    auto& m = AuthLicenseManager::Instance();
+    *HasLicense = m.HasLicense() ? 1 : 0;
+    *ExpiryDate = AllocRpcWString(m.GetLicenseExpiry());
+    return *ExpiryDate ? S_OK : E_OUTOFMEMORY;
+}
+
+long Activate(handle_t Binding, const wchar_t* ActivationKey, long* HttpStatus) {
+    if (!ActivationKey || !HttpStatus) return E_POINTER;
+    *HttpStatus = AuthLicenseManager::Instance().Activate(ActivationKey);
+    return (*HttpStatus == 200) ? S_OK : E_FAIL;
+}
+
+long ScanFile(handle_t Binding, const wchar_t* Path, long* Verdict) {
+    if (!Verdict) return E_POINTER;
+    if (!AuthLicenseManager::Instance().HasLicense()) {
+        *Verdict = -1;
+        return E_ACCESSDENIED;
+    }
+    *Verdict = 0;
+    return S_OK;
+}
+
 void* __RPC_USER MIDL_user_allocate(size_t size) { return malloc(size); }
 void __RPC_USER MIDL_user_free(void* p) { free(p); }
 
@@ -197,16 +248,18 @@ DWORD WINAPI ServiceWorkerThread(LPVOID lpParam) {
         WTSFreeMemory(pSessionInfo);
     }
 
+    AuthLicenseManager::Instance().Start();
+
     RPC_STATUS status = RpcServerUseProtseqEpW((RPC_WSTR)L"ncalrpc", RPC_C_PROTSEQ_MAX_REQS_DEFAULT, (RPC_WSTR)L"TrayAppRpcPort", NULL);
     if (status == RPC_S_OK) {
-        status = RpcServerRegisterIf(ITrayAppService_v1_0_s_ifspec, NULL, NULL);
-        if (status == RPC_S_OK) {
-            RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, FALSE);
-        }
+        RpcServerRegisterIf(ITrayAppService_v1_0_s_ifspec, NULL, NULL);
+        RpcServerRegisterIf(IAuthLicenseService_v1_0_s_ifspec, NULL, NULL);
+        RpcServerListen(1, RPC_C_LISTEN_MAX_CALLS_DEFAULT, FALSE);
     }
 
     WaitForSingleObject(g_ServiceStopEvent, INFINITE);
     RpcMgmtWaitServerListen();
+    AuthLicenseManager::Instance().Stop();
 
     g_ServiceStatus.dwCurrentState = SERVICE_STOPPED;
     SetServiceStatus(g_StatusHandle, &g_ServiceStatus);

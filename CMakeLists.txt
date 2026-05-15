@@ -147,18 +147,43 @@ set_source_files_properties(
     PROPERTIES GENERATED TRUE
 )
 
+add_custom_command(
+    OUTPUT "${RPC_OUTPUT_DIR}/AuthLicenseRpc_h.h"
+           "${RPC_OUTPUT_DIR}/AuthLicenseRpc_c.c"
+           "${RPC_OUTPUT_DIR}/AuthLicenseRpc_s.c"
+    COMMAND midl.exe /nologo /env x64 /Oicf /h "AuthLicenseRpc_h.h" /cstub "AuthLicenseRpc_c.c" /sstub "AuthLicenseRpc_s.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/AuthLicenseRpc.idl"
+    WORKING_DIRECTORY "${RPC_OUTPUT_DIR}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/AuthLicenseRpc.idl"
+)
+
+set_source_files_properties(
+    "${RPC_OUTPUT_DIR}/AuthLicenseRpc_c.c"
+    "${RPC_OUTPUT_DIR}/AuthLicenseRpc_s.c"
+    "${RPC_OUTPUT_DIR}/AuthLicenseRpc_h.h"
+    PROPERTIES GENERATED TRUE
+)
+
 add_custom_target(GenerateRpcStubs DEPENDS
     "${RPC_OUTPUT_DIR}/ServiceRpc_h.h"
     "${RPC_OUTPUT_DIR}/ServiceRpc_c.c"
     "${RPC_OUTPUT_DIR}/ServiceRpc_s.c"
+    "${RPC_OUTPUT_DIR}/AuthLicenseRpc_h.h"
+    "${RPC_OUTPUT_DIR}/AuthLicenseRpc_c.c"
+    "${RPC_OUTPUT_DIR}/AuthLicenseRpc_s.c"
 )
 
-add_library(RpcClientStub STATIC "${RPC_OUTPUT_DIR}/ServiceRpc_c.c")
+add_library(RpcClientStub STATIC
+    "${RPC_OUTPUT_DIR}/ServiceRpc_c.c"
+    "${RPC_OUTPUT_DIR}/AuthLicenseRpc_c.c"
+)
 set_target_properties(RpcClientStub PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(RpcClientStub PUBLIC "${RPC_OUTPUT_DIR}")
 add_dependencies(RpcClientStub GenerateRpcStubs)
 
-add_library(RpcServerStub STATIC "${RPC_OUTPUT_DIR}/ServiceRpc_s.c")
+add_library(RpcServerStub STATIC
+    "${RPC_OUTPUT_DIR}/ServiceRpc_s.c"
+    "${RPC_OUTPUT_DIR}/AuthLicenseRpc_s.c"
+)
 set_target_properties(RpcServerStub PROPERTIES LINKER_LANGUAGE C)
 target_include_directories(RpcServerStub PUBLIC "${RPC_OUTPUT_DIR}")
 add_dependencies(RpcServerStub GenerateRpcStubs)
@@ -183,6 +208,7 @@ target_link_libraries(TrayApp PRIVATE
     user32 shell32 gdi32 comctl32 ole32 advapi32 rpcrt4 wtsapi32
     windowsapp
 )
+add_dependencies(TrayApp GenerateRpcStubs)
 
 set_target_properties(TrayApp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
@@ -206,10 +232,13 @@ target_include_directories(TrayApp PRIVATE src)
 
 add_executable(TrayAppService WIN32
     src/service_main.cpp
+    src/HttpClient.cpp
+    src/AuthLicense.cpp
 )
-target_include_directories(TrayAppService PRIVATE "${RPC_OUTPUT_DIR}")
-target_link_libraries(TrayAppService PRIVATE RpcServerStub user32 advapi32 rpcrt4 wtsapi32 userenv)
+target_include_directories(TrayAppService PRIVATE "${RPC_OUTPUT_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(TrayAppService PRIVATE RpcServerStub user32 advapi32 rpcrt4 wtsapi32 userenv winhttp iphlpapi)
 set_target_properties(TrayAppService PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_dependencies(TrayAppService GenerateRpcStubs)
 
 add_executable(SecurePrompt WIN32
     src/prompt_main.cpp
