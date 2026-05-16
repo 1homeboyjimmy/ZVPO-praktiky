@@ -1,0 +1,42 @@
+import "wtypes.idl";
+
+[
+    uuid(7E3F5C61-2A8B-49D1-9D6E-FC2C71B0AAE5),
+    version(1.0)
+]
+interface IAuthLicenseService
+{
+    long GetCurrentUser(
+        [in] handle_t Binding,
+        [out, string] wchar_t** Username
+    );
+
+    long Login(
+        [in] handle_t Binding,
+        [in, string] const wchar_t* Username,
+        [in, string] const wchar_t* Password,
+        [out] long* HttpStatus
+    );
+
+    long Logout(
+        [in] handle_t Binding
+    );
+
+    long GetLicenseInfo(
+        [in] handle_t Binding,
+        [out] long* HasLicense,
+        [out, string] wchar_t** ExpiryDate
+    );
+
+    long Activate(
+        [in] handle_t Binding,
+        [in, string] const wchar_t* ActivationKey,
+        [out] long* HttpStatus
+    );
+
+    long ScanFile(
+        [in] handle_t Binding,
+        [in, string] const wchar_t* Path,
+        [out] long* Verdict
+    );
+}
