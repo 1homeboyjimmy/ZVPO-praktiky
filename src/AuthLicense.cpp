@@ -1,15 +1,17 @@
 #include "AuthLicense.h"
 #include "HttpClient.h"
-#include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <iphlpapi.h>
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <vector>
 
 #pragma comment(lib, "iphlpapi.lib")
 
 static const wchar_t* kServerHost = L"localhost";
-static const int kServerPort = 8443;
+static const int kServerPort = 8080;
 static const long long kProductId = 1;
 
 static std::wstring Utf8ToWide(const std::string& s) {

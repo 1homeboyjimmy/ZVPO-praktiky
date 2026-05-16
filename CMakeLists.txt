@@ -190,6 +190,8 @@ add_dependencies(RpcServerStub GenerateRpcStubs)
 
 add_executable(TrayApp WIN32
     src/main.cpp
+    src/HttpClient.cpp
+    src/AuthLicense.cpp
     resources/app.rc
     src/app.manifest
 )
@@ -205,7 +207,7 @@ target_include_directories(TrayApp PRIVATE
 target_link_libraries(TrayApp PRIVATE
     RpcClientStub
     "${WASDK_LIB_DIR}/Microsoft.WindowsAppRuntime.Bootstrap.lib"
-    user32 shell32 gdi32 comctl32 ole32 advapi32 rpcrt4 wtsapi32
+    user32 shell32 gdi32 comctl32 ole32 advapi32 rpcrt4 wtsapi32 winhttp iphlpapi
     windowsapp
 )
 add_dependencies(TrayApp GenerateRpcStubs)
